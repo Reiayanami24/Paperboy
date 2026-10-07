@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- E-ink friendly: light background, and NO window/dialog animations (every
+         animation frame is a panel refresh and leaves ghosting). -->
+    <style name="NoAnimation">
+        <item name="android:windowEnterAnimation">@null</item>
+        <item name="android:windowExitAnimation">@null</item>
+    </style>
+
+    <style name="EinkDialog" parent="android:Theme.Material.Light.Dialog.Alert">
+        <item name="android:windowAnimationStyle">@style/NoAnimation</item>
+    </style>
+
+    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowAnimationStyle">@style/NoAnimation</item>
+        <item name="android:alertDialogTheme">@style/EinkDialog</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+
+    <style name="GameTheme" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowAnimationStyle">@style/NoAnimation</item>
+        <item name="android:alertDialogTheme">@style/EinkDialog</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+
+    <color name="ic_launcher_background">#2B2F3A</color>
+</resources>
