@@ -82,13 +82,16 @@ class ControlsView(context: Context) : ViewGroup(context) {
     }
     private val plus = Path()
 
-    /** Draws one group of controls; [draw] works in this view's coordinates. */
-    private inner class Part(private val draw: (Canvas) -> Unit) : View(this@ControlsView.context) {
+    /**
+     * Draws one group of controls; [paint] works in this view's coordinates.
+     * (Not called "draw": inside a View that name means View.draw(), which calls onDraw().)
+     */
+    private inner class Part(private val paint: (Canvas) -> Unit) : View(this@ControlsView.context) {
         val bounds = Rect()
 
         override fun onDraw(canvas: Canvas) {
             canvas.translate(-left.toFloat(), -top.toFloat())
-            draw(canvas)
+            paint(canvas)
         }
     }
 
