@@ -27,6 +27,9 @@ Studio has generated the wrapper. Install on the tablet with USB debugging / `ad
 * Menu: save/load state, palette, sound, display rate, integer scaling, e-ink mode, clear ghosting.
 * Battery saves are written automatically (about every 2 s when changed, and on pause/exit).
 * Keyboard (Z = B, X = A, Enter = Start, Backspace = Select, arrows) and Bluetooth gamepads work too.
+* **Save logs…** (bottom of the game list) saves a text report to a place you pick: device info,
+  settings, recent crashes (including native-code crashes, via Android 11's exit records) and the
+  app's logcat. After a crash, the app offers this on its next start.
 
 ## E-ink tuning (BOOX Tab Ultra C: 10.3", 2480x1860 mono / 1240x930 colour, Android 11)
 Detected automatically (`Build.MANUFACTURER == ONYX`); can be switched in the game menu on any device.
@@ -48,6 +51,8 @@ and refresh-mode defaults are reasoned, not measured on hardware: tune the displ
 `sh tools/host_test/run.sh` builds the native layer for the desktop and runs a smoke test with a
 hand-assembled ROM (video, audio, battery RAM, save states, change detection).
 `tools/host_test/fuzz.c` is a robustness fuzzer; build it with `-fsanitize=address,undefined`.
+The *Emulator smoke test* workflow boots an Android 11 emulator, runs a test ROM in normal and e-ink
+mode, rotates the screen, and fails on any crash; logcat and screenshots are uploaded as `emulator-logs`.
 
 ## Changes from the firmware code (found by sanitizer fuzzing)
 * Cart RAM is allocated for every address the core can reach (it reads past a header-sized buffer, or
