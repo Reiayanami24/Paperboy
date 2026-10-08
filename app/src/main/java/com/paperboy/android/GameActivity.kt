@@ -7,6 +7,7 @@ import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -159,6 +160,7 @@ class GameActivity : Activity(), Emulator.Listener {
         if (w == 0 || h == 0) return
         Viewport.compute(w, h, insets, settings.integerScale, settings.einkMode, viewport)
         if (viewport != lastViewport) {
+            Log.i(CrashLog.TAG, "Layout: window ${w}x$h, insets $insets, picture $viewport")
             lastViewport = Rect(viewport)
             // The surface is exactly the picture, so presenting a frame never touches the rest of the screen.
             val lp = FrameLayout.LayoutParams(viewport.width(), viewport.height())

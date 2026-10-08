@@ -1,6 +1,7 @@
 package com.paperboy.android
 
 import android.os.Process
+import android.util.Log
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
@@ -169,10 +170,14 @@ class Emulator(
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         var audio: AudioOutput? = null
         try {
+            Log.i(CrashLog.TAG, "Starting game: ${rom.size} bytes, sound=$soundEnabled, divisor=$displayDivisor")
             if (!NativeCore.nInit(rom)) {
-                listener.onFatal("Couldn't start this game: ${NativeCore.nLastError()}")
+                val error = NativeCore.nLastError()
+                Log.e(CrashLog.TAG, "nInit failed: $error")
+                listener.onFatal("Couldn't start this game: $error")
                 return
             }
+            Log.i(CrashLog.TAG, "Loaded \"${NativeCore.nTitle()}\", battery save: ${NativeCore.nHasPersist()}")
             loadSram()
             NativeCore.nSetPalette(initialPalette)
 
@@ -204,6 +209,7 @@ class Emulator(
                 if (wantAudio && audio == null) {
                     audio = AudioOutput.create()
                     if (audio == null) {
+                        Log.w(CrashLog.TAG, "AudioTrack could not be created")
                         audioFailed = true
                         listener.onMessage("Audio unavailable; playing without sound")
                     }
@@ -223,6 +229,7 @@ class Emulator(
                 frameCounter++
                 val tryPresent = frameCounter % displayDivisor == 0
                 if (!NativeCore.nRunFrame(tryPresent, useAudio)) {
+                    CrashLog.record("nRunFrame failed after $frameCounter frames: ${NativeCore.nLastError()}", null)
                     listener.onFatal("Emulation stopped: ${NativeCore.nLastError()}")
                     break
                 }
@@ -231,6 +238,7 @@ class Emulator(
                 // ---- pacing ----
                 if (a != null && useAudio) {
                     if (!a.writeFrame(audioBuf)) {
+                        Log.w(CrashLog.TAG, "AudioTrack write failed; continuing without sound")
                         a.release()
                         audio = null
                         audioActive = false
@@ -257,6 +265,7 @@ class Emulator(
                 }
             }
         } catch (t: Throwable) {
+            CrashLog.record("Emulation thread failed", t)
             listener.onFatal("Unexpected error: ${t.message ?: t.javaClass.simpleName}")
         } finally {
             try {

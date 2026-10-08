@@ -16,6 +16,9 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -30,6 +33,7 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
     private companion object {
         const val REQ_IMPORT = 1001
+        const val REQ_SAVE_LOG = 1002
     }
 
     private lateinit var store: GameStore
@@ -94,6 +98,11 @@ class MainActivity : Activity() {
         root.addView(addButton)
         root.addView(emptyView)
         root.addView(listView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(Button(this).apply {
+            text = "Save logs…"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setOnClickListener { saveLogs() }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         if (Eink.isOnyx()) {
             root.addView(TextView(this).apply {
                 text = "BOOX tip: for smooth play, set this app to a fast refresh mode in your BOOX " +
@@ -105,6 +114,52 @@ class MainActivity : Activity() {
         }
         setContentView(root)
         refresh()
+        offerLogAfterCrash()
+    }
+
+    /** If the app crashed since the user last looked, offer to save a log right away. */
+    private fun offerLogAfterCrash() {
+        val prefs = getSharedPreferences("log_state", MODE_PRIVATE)
+        val last = CrashLog.lastProblemTime(this)
+        if (last <= prefs.getLong("seen", 0L)) return
+        prefs.edit().putLong("seen", last).apply()
+        AlertDialog.Builder(this)
+            .setTitle("Paperboy stopped unexpectedly")
+            .setMessage("Save a log file you can share to help find the problem?")
+            .setNegativeButton("Not now", null)
+            .setPositiveButton("Save logs") { _, _ -> saveLogs() }
+            .show()
+    }
+
+    private fun saveLogs() {
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TITLE, "paperboy-log-$stamp.txt")
+        }
+        try {
+            startActivityForResult(intent, REQ_SAVE_LOG)
+        } catch (e: Exception) {
+            Toast.makeText(this, "No app available to save files", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun writeLog(uri: Uri) {
+        Toast.makeText(this, "Saving log…", Toast.LENGTH_SHORT).show()
+        val app = applicationContext
+        io.execute {
+            val ok = try {
+                val text = CrashLog.report(app)
+                contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) } != null
+            } catch (e: Exception) {
+                CrashLog.record("Saving log failed", e)
+                false
+            }
+            runOnUiThread {
+                if (!isDestroyed) Toast.makeText(this, if (ok) "Log saved" else "Couldn't save the log", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -151,6 +206,10 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_SAVE_LOG) {
+            if (resultCode == RESULT_OK) data?.data?.let { writeLog(it) }
+            return
+        }
         if (requestCode != REQ_IMPORT || resultCode != RESULT_OK || data == null) return
 
         val uris = ArrayList<Uri>()
