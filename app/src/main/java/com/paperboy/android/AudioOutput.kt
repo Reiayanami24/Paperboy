@@ -62,9 +62,9 @@ class AudioOutput private constructor(private val track: AudioTrack) {
             val minBytes = AudioTrack.getMinBufferSize(
                 NativeCore.AUDIO_RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT
             )
-            // ~4 frames (~67 ms): tight sync, but enough to ride out scheduler jitter and
-            // the occasional slow e-ink present.
-            val bufferBytes = maxOf(minBytes, FRAME_BYTES * 4)
+            // ~6 frames (~100 ms): still tight sync, with enough slack that a scheduler hiccup
+            // on a slower SoC (such as the BOOX tablets') doesn't underrun and stutter.
+            val bufferBytes = maxOf(minBytes, FRAME_BYTES * 6)
             val track = AudioTrack.Builder()
                 .setAudioAttributes(attrs)
                 .setAudioFormat(format)

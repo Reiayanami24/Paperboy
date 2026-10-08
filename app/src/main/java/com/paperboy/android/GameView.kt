@@ -6,8 +6,12 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.os.Process
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import java.nio.ByteBuffer
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import kotlin.math.floor
 
 /**
@@ -41,28 +45,100 @@ object Viewport {
  * Draws emulator frames. The view is sized to exactly the picture, so a frame update
  * only ever touches (and, on e-ink, only ever refreshes) that rectangle.
  *
- * [present] is called from the emulation thread, the surface callbacks arrive on the
- * UI thread, so everything that touches the surface goes through [drawLock].
+ * Frames are drawn on a dedicated thread. [present] (emulation thread) only copies the
+ * newest picture into a staging buffer and returns: posting to the surface can block for
+ * a long time when the panel is slow (e-ink), and if that happened on the emulation
+ * thread the audio would underrun and the game would stutter. If the panel falls behind,
+ * older frames are simply skipped.
+ *
+ * Everything that touches the surface goes through [drawLock], because the surface
+ * callbacks arrive on the UI thread.
  */
 class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
     private val drawLock = Any()
     private var surfaceReady = false // guarded by drawLock
 
-    @Volatile
-    private var lastFrame: Bitmap? = null
+    // Hand-over from the emulation thread to the render thread; all guarded by frameLock.
+    private val frameLock = ReentrantLock()
+    private val frameCond = frameLock.newCondition()
+    private val staging = ByteBuffer.allocateDirect(NativeCore.SCREEN_WIDTH * NativeCore.SCREEN_HEIGHT * 4)
+    private var frameWaiting = false
+    private var redrawWanted = false
+    private var running = false
+    private var renderThread: Thread? = null
+
+    // Render thread only. Two bitmaps in turn: the hardware canvas uploads a bitmap
+    // asynchronously, so the one just drawn must not be overwritten by the next frame.
+    private val bitmaps = Array(2) {
+        Bitmap.createBitmap(NativeCore.SCREEN_WIDTH, NativeCore.SCREEN_HEIGHT, Bitmap.Config.ARGB_8888)
+    }
+    private var shown = -1 // index of the bitmap holding the newest picture, -1 = none yet
 
     private val src = Rect(0, 0, NativeCore.SCREEN_WIDTH, NativeCore.SCREEN_HEIGHT)
     private val dst = Rect()
 
-    // No bitmap filtering: GB pixels must stay crisp.
-    private val paint = Paint()
+    // No bitmap filtering: GB pixels must stay crisp. (Since Android 9 a new Paint
+    // filters bitmaps by default, which blurs pixel edges into grey bands; on e-ink that
+    // also means many more pixels change, and get dithered, on every frame.)
+    private val paint = Paint().apply { isFilterBitmap = false }
 
     init {
         holder.addCallback(this)
     }
 
-    fun present(bitmap: Bitmap) {
-        lastFrame = bitmap
+    /** Emulation thread: hands over the newest picture (RGBA, 160x144). Never waits for the display. */
+    fun present(video: ByteBuffer) {
+        frameLock.withLock {
+            video.rewind()
+            staging.clear()
+            staging.put(video)
+            frameWaiting = true
+            frameCond.signal()
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        frameLock.withLock { running = true }
+        renderThread = Thread(Runnable { renderLoop() }, "paperboy-display").also { it.start() }
+    }
+
+    override fun onDetachedFromWindow() {
+        frameLock.withLock {
+            running = false
+            frameCond.signal()
+        }
+        renderThread?.join(1000)
+        renderThread = null
+        super.onDetachedFromWindow()
+    }
+
+    private fun requestRedraw() {
+        frameLock.withLock {
+            redrawWanted = true
+            frameCond.signal()
+        }
+    }
+
+    private fun renderLoop() {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY)
+        while (true) {
+            frameLock.withLock {
+                while (running && !frameWaiting && !redrawWanted) frameCond.await()
+                if (!running) return
+                if (frameWaiting) {
+                    shown = (shown + 1) % bitmaps.size
+                    staging.rewind()
+                    bitmaps[shown].copyPixelsFromBuffer(staging)
+                    frameWaiting = false
+                }
+                redrawWanted = false
+            }
+            if (shown >= 0) draw(bitmaps[shown])
+        }
+    }
+
+    private fun draw(bitmap: Bitmap) {
         synchronized(drawLock) {
             if (!surfaceReady) return
             val canvas = lockCanvasCompat() ?: return
@@ -96,7 +172,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
 
     override fun surfaceChanged(h: SurfaceHolder, format: Int, width: Int, height: Int) {
         synchronized(drawLock) { surfaceReady = true }
-        lastFrame?.let { present(it) } // repaint at the new size even while paused
+        requestRedraw() // repaint at the new size even while paused
     }
 
     override fun surfaceDestroyed(h: SurfaceHolder) {

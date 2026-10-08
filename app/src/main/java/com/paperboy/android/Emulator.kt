@@ -1,6 +1,5 @@
 package com.paperboy.android
 
-import android.graphics.Bitmap
 import android.os.Process
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -179,13 +178,6 @@ class Emulator(
 
             val video = NativeCore.nVideoBuffer()
             val audioBuf = NativeCore.nAudioBuffer()
-            // Three bitmaps in rotation: the hardware canvas uploads a bitmap asynchronously,
-            // so the one just handed over must not be overwritten by the next frame.
-            val bitmaps = Array(3) {
-                Bitmap.createBitmap(NativeCore.SCREEN_WIDTH, NativeCore.SCREEN_HEIGHT, Bitmap.Config.ARGB_8888)
-            }
-            var bitmapIndex = 0
-
             var audioActive = false
             var audioFailed = false
             var nextDeadline = System.nanoTime()
@@ -234,13 +226,7 @@ class Emulator(
                     listener.onFatal("Emulation stopped: ${NativeCore.nLastError()}")
                     break
                 }
-                if (tryPresent && NativeCore.nFrameUpdated()) {
-                    video.rewind() // copyPixelsFromBuffer advances the position
-                    val bmp = bitmaps[bitmapIndex]
-                    bitmapIndex = (bitmapIndex + 1) % bitmaps.size
-                    bmp.copyPixelsFromBuffer(video)
-                    view.present(bmp)
-                }
+                if (tryPresent && NativeCore.nFrameUpdated()) view.present(video) // copies and returns at once
 
                 // ---- pacing ----
                 if (a != null && useAudio) {
