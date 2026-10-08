@@ -13,7 +13,7 @@
         {"name": "Install Android SDK pieces", "run": "yes | \"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager\" --licenses > /dev/null || true; \"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager\" \"platforms;android-30\" \"build-tools;34.0.0\" \"cmake;3.22.1\" \"ndk;25.1.8937393\""},
         {"uses": "gradle/actions/setup-gradle@v4", "with": {"gradle-version": "8.2.1"}},
         {"name": "Build debug APK", "run": "gradle --no-daemon assembleDebug"},
-        {"name": "Make test ROM", "run": "mkdir -p build && python3 tools/emulator_test/make_rom.py build/test.gb"},
+        {"name": "Make test ROM", "run": "mkdir -p build && python3 tools/emulator_test/make_rom.py build/test.gb && (command -v convert || sudo apt-get install -y -qq imagemagick > /dev/null || true)"},
         {"name": "Run on emulator", "uses": "reactivecircus/android-emulator-runner@v2", "with": {
           "api-level": 30, "target": "google_apis", "arch": "x86_64", "profile": "pixel_c", "disk-size": "3000M", "cores": 4,
           "emulator-options": "-no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none",

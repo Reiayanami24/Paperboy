@@ -45,18 +45,22 @@ run_case() { # name eink(true|false)
         adb shell dumpsys activity exit-info $PKG | head -40
         FAILED=1
     fi
-    if grep -q "FATAL EXCEPTION\|Fatal signal\|Unexpected error\|Emulation stopped" "$OUT/$name-logcat.txt"; then
+    # Only this app's lines: other apps on the emulator log their own errors.
+    APPLOG="$OUT/$name-app.txt"
+    grep "com.paperboy.android\| Paperboy\|${PID:-NOPID}" "$OUT/$name-logcat.txt" > "$APPLOG"
+    if grep -q "FATAL EXCEPTION\|Fatal signal\| E Paperboy" "$APPLOG"; then
         echo "::error::$name: crash or emulator error in logcat"
-        grep -A40 "FATAL EXCEPTION\|Fatal signal\|Unexpected error\|Emulation stopped" "$OUT/$name-logcat.txt" | head -80
+        grep -A40 "FATAL EXCEPTION\|Fatal signal\| E Paperboy" "$APPLOG" | head -80
         FAILED=1
     fi
     # Anything this app logged at warning level or above.
     [ -n "$PID" ] && grep " $PID .* [WEF] " "$OUT/$name-logcat.txt" | grep -v "^--" | head -30
     grep " Paperboy" "$OUT/$name-logcat.txt" | head -20
     # Small preview of the rotated screen in the log, for quick checks without the artifact.
-    if command -v convert >/dev/null; then
+    IM=$(command -v magick || command -v convert || true)
+    if [ -n "$IM" ]; then
         echo "$name preview (base64 JPEG):"
-        convert "$OUT/$name-rotated.png" -resize 360x -quality 50 jpg:- | base64 -w0
+        "$IM" "$OUT/$name-rotated.png" -resize 360x -quality 50 jpg:- | base64 -w0
         echo
     fi
 }
