@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.os.Process
+import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import java.nio.ByteBuffer
@@ -59,6 +60,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
     private var surfaceReady = false // guarded by drawLock
     private var surfaceW = 0 // guarded by drawLock: size reported by surfaceChanged
     private var surfaceH = 0
+    private var logDraws = 0 // guarded by drawLock: log the first few draws after a resize
 
     // Hand-over from the emulation thread to the render thread; all guarded by frameLock.
     private val frameLock = ReentrantLock()
@@ -155,6 +157,10 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
             val canvas = lockCanvasCompat() ?: return true
             val sizeOk = surfaceW == 0 || (canvas.width == surfaceW && canvas.height == surfaceH)
             if (sizeOk) sizeRetries = 0
+            if (logDraws > 0) {
+                logDraws--
+                Log.i(CrashLog.TAG, "Draw: canvas ${canvas.width}x${canvas.height}, surface ${surfaceW}x$surfaceH, hw=${canvas.isHardwareAccelerated}")
+            }
             try {
                 dst.set(0, 0, canvas.width, canvas.height)
                 canvas.drawColor(Color.BLACK)
@@ -181,6 +187,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
     }
 
     override fun surfaceCreated(h: SurfaceHolder) {
+        Log.i(CrashLog.TAG, "Surface created")
         synchronized(drawLock) { surfaceReady = true }
     }
 
@@ -189,11 +196,14 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
             surfaceReady = true
             surfaceW = width
             surfaceH = height
+            logDraws = 3
         }
+        Log.i(CrashLog.TAG, "Surface changed: ${width}x$height, view ${this.width}x${this.height}")
         requestRedraw() // repaint at the new size even while paused
     }
 
     override fun surfaceDestroyed(h: SurfaceHolder) {
+        Log.i(CrashLog.TAG, "Surface destroyed")
         synchronized(drawLock) { surfaceReady = false }
     }
 }
