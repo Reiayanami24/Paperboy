@@ -55,12 +55,9 @@ object Viewport {
  * Everything that touches the surface goes through [drawLock], because the surface
  * callbacks arrive on the UI thread.
  */
-class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
+class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback2 {
     private val drawLock = Any()
     private var surfaceReady = false // guarded by drawLock
-    private var surfaceW = 0 // guarded by drawLock: size reported by surfaceChanged
-    private var surfaceH = 0
-    private var logDraws = 0 // guarded by drawLock: log the first few draws after a resize
 
     // Hand-over from the emulation thread to the render thread; all guarded by frameLock.
     private val frameLock = ReentrantLock()
@@ -71,13 +68,13 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
     private var running = false
     private var renderThread: Thread? = null
 
-    // Render thread only. Two bitmaps in turn: the hardware canvas uploads a bitmap
+    // Written by the render thread under frameLock. Two bitmaps in turn: the hardware canvas uploads a bitmap
     // asynchronously, so the one just drawn must not be overwritten by the next frame.
     private val bitmaps = Array(2) {
         Bitmap.createBitmap(NativeCore.SCREEN_WIDTH, NativeCore.SCREEN_HEIGHT, Bitmap.Config.ARGB_8888)
     }
-    private var shown = -1 // index of the bitmap holding the newest picture, -1 = none yet
-    private var sizeRetries = 0 // redraws in a row whose buffer had the wrong size
+    @Volatile
+    private var shown = -1 // index of the bitmap holding the newest picture, -1 = none yet; set under frameLock
 
     private val src = Rect(0, 0, NativeCore.SCREEN_WIDTH, NativeCore.SCREEN_HEIGHT)
     private val dst = Rect()
@@ -109,6 +106,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
     }
 
     override fun onDetachedFromWindow() {
+        removeCallbacks(lateRedraw)
         frameLock.withLock {
             running = false
             frameCond.signal()
@@ -139,28 +137,15 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
                 }
                 redrawWanted = false
             }
-            if (shown >= 0 && !draw(bitmaps[shown]) && sizeRetries < 30) {
-                // Right after a resize (e.g. rotation) the surface can still hand out buffers of
-                // the old size for a moment; what is drawn into one would show cropped or with
-                // black bands. Try again shortly (for up to about a second) until the new size arrives.
-                sizeRetries++
-                Thread.sleep(30)
-                frameLock.withLock { redrawWanted = true }
-            }
+            val index = shown
+            if (index >= 0) draw(bitmaps[index])
         }
     }
 
-    /** Returns false if the buffer didn't have the surface's current size yet. */
-    private fun draw(bitmap: Bitmap): Boolean {
+    private fun draw(bitmap: Bitmap) {
         synchronized(drawLock) {
-            if (!surfaceReady) return true
-            val canvas = lockCanvasCompat() ?: return true
-            val sizeOk = surfaceW == 0 || (canvas.width == surfaceW && canvas.height == surfaceH)
-            if (sizeOk) sizeRetries = 0
-            if (logDraws > 0) {
-                logDraws--
-                Log.i(CrashLog.TAG, "Draw: canvas ${canvas.width}x${canvas.height}, surface ${surfaceW}x$surfaceH, hw=${canvas.isHardwareAccelerated}")
-            }
+            if (!surfaceReady) return
+            val canvas = lockCanvasCompat() ?: return
             try {
                 dst.set(0, 0, canvas.width, canvas.height)
                 canvas.drawColor(Color.BLACK)
@@ -168,7 +153,6 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
             } finally {
                 holder.unlockCanvasAndPost(canvas)
             }
-            return sizeOk
         }
     }
 
@@ -192,14 +176,25 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
     }
 
     override fun surfaceChanged(h: SurfaceHolder, format: Int, width: Int, height: Int) {
-        synchronized(drawLock) {
-            surfaceReady = true
-            surfaceW = width
-            surfaceH = height
-            logDraws = 3
-        }
-        Log.i(CrashLog.TAG, "Surface changed: ${width}x$height, view ${this.width}x${this.height}")
+        Log.i(CrashLog.TAG, "Surface changed: ${width}x$height")
+        synchronized(drawLock) { surfaceReady = true }
         requestRedraw() // repaint at the new size even while paused
+        // A frame drawn right as the size changes (e.g. on rotation) can be dropped by the system,
+        // which would leave the old picture with black bands until the game next changes the
+        // screen. Two cheap repaints a moment later make sure the new size gets a picture.
+        removeCallbacks(lateRedraw)
+        postDelayed(lateRedraw, 150)
+        postDelayed(lateRedraw, 600)
+    }
+
+    private val lateRedraw = Runnable { requestRedraw() }
+
+    /** The system waits for this before showing the resized surface, so draw now, synchronously. */
+    override fun surfaceRedrawNeeded(h: SurfaceHolder) {
+        frameLock.withLock {
+            val index = shown
+            if (index >= 0) draw(bitmaps[index])
+        }
     }
 
     override fun surfaceDestroyed(h: SurfaceHolder) {
