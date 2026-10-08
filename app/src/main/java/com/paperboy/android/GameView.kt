@@ -57,6 +57,8 @@ object Viewport {
 class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
     private val drawLock = Any()
     private var surfaceReady = false // guarded by drawLock
+    private var surfaceW = 0 // guarded by drawLock: size reported by surfaceChanged
+    private var surfaceH = 0
 
     // Hand-over from the emulation thread to the render thread; all guarded by frameLock.
     private val frameLock = ReentrantLock()
@@ -73,6 +75,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
         Bitmap.createBitmap(NativeCore.SCREEN_WIDTH, NativeCore.SCREEN_HEIGHT, Bitmap.Config.ARGB_8888)
     }
     private var shown = -1 // index of the bitmap holding the newest picture, -1 = none yet
+    private var sizeRetries = 0 // redraws in a row whose buffer had the wrong size
 
     private val src = Rect(0, 0, NativeCore.SCREEN_WIDTH, NativeCore.SCREEN_HEIGHT)
     private val dst = Rect()
@@ -134,14 +137,24 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
                 }
                 redrawWanted = false
             }
-            if (shown >= 0) draw(bitmaps[shown])
+            if (shown >= 0 && !draw(bitmaps[shown]) && sizeRetries < 30) {
+                // Right after a resize (e.g. rotation) the surface can still hand out buffers of
+                // the old size for a moment; what is drawn into one would show cropped or with
+                // black bands. Try again shortly (for up to about a second) until the new size arrives.
+                sizeRetries++
+                Thread.sleep(30)
+                frameLock.withLock { redrawWanted = true }
+            }
         }
     }
 
-    private fun draw(bitmap: Bitmap) {
+    /** Returns false if the buffer didn't have the surface's current size yet. */
+    private fun draw(bitmap: Bitmap): Boolean {
         synchronized(drawLock) {
-            if (!surfaceReady) return
-            val canvas = lockCanvasCompat() ?: return
+            if (!surfaceReady) return true
+            val canvas = lockCanvasCompat() ?: return true
+            val sizeOk = surfaceW == 0 || (canvas.width == surfaceW && canvas.height == surfaceH)
+            if (sizeOk) sizeRetries = 0
             try {
                 dst.set(0, 0, canvas.width, canvas.height)
                 canvas.drawColor(Color.BLACK)
@@ -149,6 +162,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
             } finally {
                 holder.unlockCanvasAndPost(canvas)
             }
+            return sizeOk
         }
     }
 
@@ -171,7 +185,11 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
     }
 
     override fun surfaceChanged(h: SurfaceHolder, format: Int, width: Int, height: Int) {
-        synchronized(drawLock) { surfaceReady = true }
+        synchronized(drawLock) {
+            surfaceReady = true
+            surfaceW = width
+            surfaceH = height
+        }
         requestRedraw() // repaint at the new size even while paused
     }
 
