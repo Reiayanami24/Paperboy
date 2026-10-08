@@ -33,19 +33,32 @@ run_case() { # name eink(true|false)
     adb logcat -c
     adb shell am start -W -n $PKG/.GameActivity --es rom_id "$ID" --es rom_name Smoke
     sleep 12
-    adb exec-out screencap -p > "$OUT/$name-portrait.png"
+    adb exec-out screencap -p > "$OUT/$name-start.png"
     adb shell settings put system user_rotation 1
     sleep 8
-    adb exec-out screencap -p > "$OUT/$name-landscape.png"
+    adb exec-out screencap -p > "$OUT/$name-rotated.png"
+    PID=$(adb shell pidof $PKG | tr -d '\r')
     adb logcat -d -v threadtime > "$OUT/$name-logcat.txt"
-    if ! adb shell pidof $PKG >/dev/null || grep -q "FATAL EXCEPTION\|Fatal signal\|Unexpected error\|Emulation stopped" "$OUT/$name-logcat.txt"; then
-        echo "::error::$name: the app died or reported an error"
-        grep -A40 "FATAL EXCEPTION\|Fatal signal\|backtrace:" "$OUT/$name-logcat.txt" | head -80
+    echo "$name: app pid after rotation: '${PID}'"
+    if [ -z "$PID" ]; then
+        echo "::error::$name: the app is no longer running"
+        adb shell dumpsys activity exit-info $PKG | head -40
         FAILED=1
-    else
-        echo "$name: still running after start and rotation"
     fi
+    if grep -q "FATAL EXCEPTION\|Fatal signal\|Unexpected error\|Emulation stopped" "$OUT/$name-logcat.txt"; then
+        echo "::error::$name: crash or emulator error in logcat"
+        grep -A40 "FATAL EXCEPTION\|Fatal signal\|Unexpected error\|Emulation stopped" "$OUT/$name-logcat.txt" | head -80
+        FAILED=1
+    fi
+    # Anything this app logged at warning level or above.
+    [ -n "$PID" ] && grep " $PID .* [WEF] " "$OUT/$name-logcat.txt" | grep -v "^--" | head -30
     grep " Paperboy" "$OUT/$name-logcat.txt" | head -20
+    # Small preview of the rotated screen in the log, for quick checks without the artifact.
+    if command -v convert >/dev/null; then
+        echo "$name preview (base64 JPEG):"
+        convert "$OUT/$name-rotated.png" -resize 360x -quality 50 jpg:- | base64 -w0
+        echo
+    fi
 }
 
 run_case normal false
